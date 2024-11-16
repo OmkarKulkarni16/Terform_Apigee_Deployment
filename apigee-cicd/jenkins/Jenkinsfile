@@ -1,0 +1,86 @@
+pipeline {
+
+    agent any
+    environment {
+      TF_PATH = './apigee-cicd/terraform'
+      PROXY_PATH = 'terraform/proxies_export'
+      WORK_DIR = './apigee-cicd'
+    }
+
+    parameters{
+            string(defaultValue: 'apg-hub-00', description: 'The GCP Project which has Apigee Enabled', name: 'GCP_PROJECT_ID')
+            choice(choices: ['low', 'medium', 'high', 'critical'], description: 'The Category of Proxy Bundle to Generate', name: 'PROXY_CATEGORY')
+            string(defaultValue: 'test1', description: 'The Name of the Apigee Proxy Bundle', name: 'PROXY_NAME')
+            string(defaultValue: '/test1', description: 'The name of the Apigee Proxy Base path', name: 'PROXY_BASE_PATH')
+            string(defaultValue: 'https://mocktarget.apigee.net', name: 'TARGET_URL')
+            password(description: 'The GCP Access token . Generate using the command "gcloud auth print-access-token"', name: 'GCP_ACCESS_TOKEN')
+            string(defaultValue: 'dev-00', name: 'ENV_NAME')
+            string(defaultValue: '-v1', name: 'APIGEE_DEPLOYMENT_SUFFIX')
+            string(defaultValue: 'payaljindal@google.com', name: 'AUTHOR_EMAIL')
+      }
+
+    stages {
+        stage('Version Check') {
+            steps {
+                sh "terraform version"
+        }}
+
+    
+        stage('Generate Proxy Bundle') {
+          steps {
+            script {
+              sh '''
+              cd $TF_PATH
+              rm terraform.tfvars || echo "ignore"
+              echo gcp_project_id=\\"$GCP_PROJECT_ID\\" > terraform.tfvars
+              echo proxy_category=\\"$PROXY_CATEGORY\\" >> terraform.tfvars
+              echo proxy_name=\\"$PROXY_NAME\\" >> terraform.tfvars
+              echo proxy_base_path=\\"$PROXY_BASE_PATH\\" >> terraform.tfvars
+              echo target_url=\\"$TARGET_URL\\" >> terraform.tfvars
+              cat terraform.tfvars
+              terraform init
+              terraform plan -var gcp_access_token=$GCP_ACCESS_TOKEN
+              terraform apply -auto-approve -var gcp_access_token=$GCP_ACCESS_TOKEN'''
+            }
+          }
+        }
+
+        stage('Static Code Analysis') {
+          steps { dir( "${env.WORK_DIR}/${env.PROXY_PATH}/${PROXY_NAME}" ) {
+            sh """
+              apigeelint -s ./apiproxy -f html.js -e PO025,PO013  > apigeelint-out.html
+            """
+
+            publishHTML(target: [
+              allowMissing: false,
+              alwaysLinkToLastBuild: false,
+              keepAll: false,
+              reportDir: ".",
+              reportFiles: 'apigeelint-out.html',
+              reportName: 'Apigeelint Report'
+            ]);
+
+            sh "rm apigeelint-out.html"
+          }
+          }
+        }
+
+        
+        stage('Deploying Proxy Bundle') {
+          steps { dir( "${env.WORK_DIR}" ) {
+            sh """
+                mvn clean install \
+                   -Pgoogleapi \
+                   -Denv="${ENV_NAME}" \
+                   -Dtoken="${GCP_ACCESS_TOKEN}" \
+                   -Dproxy.name="${PROXY_NAME}" \
+                   -Dapigee.proxy.bundle.path="$PROXY_PATH/${PROXY_NAME}" \
+                   -Dorg="${GCP_PROJECT_ID}" \
+                   -Ddeployment.suffix="${APIGEE_DEPLOYMENT_SUFFIX}" \
+                   -Ddeployment.description="Jenkins Build by Author: ${AUTHOR_EMAIL}"
+                """
+
+          } }
+        }
+    }
+}

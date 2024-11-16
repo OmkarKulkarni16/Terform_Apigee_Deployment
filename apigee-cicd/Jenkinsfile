@@ -1,0 +1,41 @@
+pipeline {
+
+    agent any
+
+    parameters{
+            string(defaultValue: 'apigee-payg-377208', description: 'The GCP Project which has Apigee Enabled', name: 'GCP_PROJECT_ID')
+            choice(choices: ['low', 'medium', 'high', 'critical'], description: 'The Category of Proxy Bundle to Generate', name: 'PROXY_CATEGORY')
+            string(defaultValue: 'test1', description: 'The Name of the Apigee Proxy Bundle', name: 'PROXY_NAME')
+            string(defaultValue: '/test1', description: 'The name of the Apigee Proxy Base path', name: 'PROXY_BASE_PATH')
+            string(defaultValue: 'https://mocktarget.apigee.net', name: 'TARGET_URL')
+            password(description: 'The GCP Access token . Generate using the command "gcloud auth print-access-token"', name: 'GCP_ACCESS_TOKEN')
+            string(defaultValue: './apigee-cicd/terraform', name: 'TF_PATH')
+      }
+
+    stages {
+        stage('Version Check') {
+            steps {
+                sh "terraform version"
+        }}
+
+    
+        stage('Generate Proxy Bundle') {
+          steps {
+            script {
+              sh '''
+              cd $TF_PATH
+              rm terraform.tfvars || echo "ignore"
+              echo gcp_project_id=\\"$GCP_PROJECT_ID\\" > terraform.tfvars
+              echo proxy_category=\\"$PROXY_CATEGORY\\" >> terraform.tfvars
+              echo proxy_name=\\"$PROXY_NAME\\" >> terraform.tfvars
+              echo proxy_base_path=\\"$PROXY_BASE_PATH\\" >> terraform.tfvars
+              echo target_url=\\"$TARGET_URL\\" >> terraform.tfvars
+              cat terraform.tfvars
+              terraform init
+              terraform plan -var gcp_access_token=$GCP_ACCESS_TOKEN
+              terraform apply -auto-approve -var gcp_access_token=$GCP_ACCESS_TOKEN'''
+            }
+          }
+        }
+    }
+}
